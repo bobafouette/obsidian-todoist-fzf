@@ -15,9 +15,10 @@ Todoist stays the alarm clock. Obsidian holds the thinking.
   (default `overdue | today`). 📝 marks tasks that already have a note.
   Choosing one creates or opens the note, writes the link back into the task,
   and logs a timestamped link in today's daily note (once per day).
-  New notes are named after the task, with spaces and characters not allowed in
-  file names replaced by the **File name separator** setting (default `-`, so
-  "Fix the printer" becomes `Fix-the-printer.md`; leave it empty to keep spaces).
+  New notes are named after the task in lower case, with spaces and characters
+  not allowed in file names replaced by the **File name separator** setting
+  (default `-`, so "Fix the printer" becomes `fix-the-printer.md`; leave it
+  empty to keep spaces).
 - **Open task note (all tasks)**: same, over every active task.
 - **Insert task inline (filtered / all tasks)**: for quick notes that don't
   deserve their own note. Inserts at the cursor:

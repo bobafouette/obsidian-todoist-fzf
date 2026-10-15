@@ -39,6 +39,7 @@ function escapeRegExp(s) {
 
 // Builds a note file name from a task title. `sep` replaces spaces and
 // characters Obsidian can't use in file names; runs of separators collapse to one.
+// The result is always lower case.
 function sanitizeTitle(s, sep = ' ') {
   sep = String(sep == null ? ' ' : sep).replace(FORBIDDEN_RE, '');
   if (!sep || /^\s+$/.test(sep)) sep = ' ';
@@ -54,7 +55,7 @@ function sanitizeTitle(s, sep = ' ') {
     t = t.replace(new RegExp(`(?:\\s|${e})+`, 'g'), sep)
       .replace(new RegExp(`^(?:${e})+|(?:${e})+$`, 'g'), '');
   }
-  return t || (sep === ' ' ? 'Untitled task' : `Untitled${sep}task`);
+  return (t || `untitled${sep}task`).toLowerCase();
 }
 
 function dueOf(task) {
@@ -520,7 +521,7 @@ class BridgeSettingTab extends PluginSettingTab {
       .addText((t) => t.setValue(s.folder).onChange(async (v) => { s.folder = v.trim(); await save(); }));
 
     new Setting(containerEl).setName('File name separator')
-      .setDesc('Replaces spaces and characters not allowed in file names when naming a new task note (e.g. "-" gives "Fix-the-printer.md"). Leave empty to keep spaces. Existing notes are not renamed.')
+      .setDesc('Replaces spaces and characters not allowed in file names when naming a new task note (e.g. "-" gives "fix-the-printer.md"; names are always lower case). Leave empty to keep spaces. Existing notes are not renamed.')
       .addText((t) => t.setPlaceholder('-').setValue(s.fileNameSeparator).onChange(async (v) => { s.fileNameSeparator = v; await save(); }));
 
     new Setting(containerEl).setName('Note template (optional)')
