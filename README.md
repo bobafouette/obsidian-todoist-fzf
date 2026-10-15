@@ -3,6 +3,20 @@
 Todoist stays the alarm clock. Obsidian holds the thinking.
 
 ## Install (desktop and Android)
+
+### With BRAT (recommended, gets updates)
+1. Settings → Community plugins → Browse → install and enable **BRAT**.
+2. Run the command **BRAT: Add a beta plugin for testing** and enter
+   `bobafouette/obsidian-todoist-fzf`.
+3. Settings → Community plugins → enable **Task Note Bridge**, then paste your
+   Todoist API token (see step 3 below).
+
+BRAT installs the latest GitHub release and keeps it updated. It works on
+Android too: do the same steps there, or let Obsidian Sync bring the plugin over.
+BRAT needs the repository to be public; for a private repository it can use a
+GitHub token (see the BRAT docs).
+
+### Manual
 1. Copy this folder to `<vault>/.obsidian/plugins/task-note-bridge/`
    (main.js, manifest.json, styles.css).
 2. Settings → Community plugins → enable **Task Note Bridge**.
@@ -40,6 +54,9 @@ A Base (or Dataview) filtered on `todoist_status` = open and sorted by `due`
 gives you a living view of your active work.
 
 ## Notes
+- The plugin talks to the Todoist API (`api.todoist.com`) over the network,
+  using your token. What it sends is task data plus the `obsidian://` links it
+  writes into task descriptions (they contain your vault name and note path).
 - The token is stored in plain text in `data.json`. If your vault is in Git,
   add `.obsidian/plugins/task-note-bridge/data.json` to `.gitignore`.
 - "Closed" means completed or deleted in Todoist; the plugin doesn't distinguish.
@@ -47,3 +64,18 @@ gives you a living view of your active work.
   skips logging if today's note doesn't exist yet.
 - Reminders stay entirely in Todoist. Tasks created from a note with a due time
   get Todoist's automatic reminder if you have that enabled in Todoist.
+
+## Development
+No build step: edit `main.js` directly. Run `node scripts/check.js` (syntax,
+manifest, secrets) and `node --test 'test/*.test.js'` before committing.
+
+## Releasing
+1. `node scripts/bump-version.js 0.3.0` (add a second argument to change
+   `minAppVersion`). It updates `manifest.json` and `versions.json` and prints
+   the next commands.
+2. Commit, tag and push: `git commit -am "Release 0.3.0"`, `git tag 0.3.0`,
+   `git push && git push origin 0.3.0`. Tags have no `v` prefix.
+3. The release workflow checks the tag against `manifest.json`, runs the checks
+   and tests, and publishes a GitHub release with `main.js`, `manifest.json`
+   and `styles.css` attached.
+4. BRAT picks up the new release on its next update check.
