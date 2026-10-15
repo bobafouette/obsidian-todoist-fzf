@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "[0-9]+.[0-9]+.[0-9]+"
+  # Publishing a release from the GitHub web page (which creates the tag too).
+  release:
+    types: [published]
+
+# Creating a release in the web page can fire both events; run them one at a
+# time so the second one only re-uploads the same files.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -44,8 +53,13 @@ jobs:
       - name: Tests
         run: node --test 'test/*.test.js'
 
-      - name: Create GitHub release
+      - name: Create the release or attach the files to it
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" main.js manifest.json styles.css --title "$TAG" --generate-notes
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" main.js manifest.json styles.css --clobber
+          else
+            gh release create "$TAG" main.js manifest.json styles.css --title "$TAG" --generate-notes
+          fi
