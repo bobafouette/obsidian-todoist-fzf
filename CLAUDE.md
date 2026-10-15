@@ -53,7 +53,12 @@ write. This plugin lets a task reach its note (and a note reach its task) withou
 - Token stored in plain text in `data.json`. Never commit it (see .gitignore).
 
 ## Status / known gaps
-- Pure helpers are unit-tested with a stubbed `obsidian` module (`TaskNoteBridge._test`).
+- Pure helpers are unit-tested with a stubbed `obsidian` module (`TaskNoteBridge._test`),
+  in `test/` (`node --test 'test/*.test.js'`, Node built-ins only, no package.json).
+- CI (`.github/workflows/ci.yml`) runs `node scripts/check.js` (syntax, mobile-safety,
+  manifest/versions.json, secrets) and the tests. Pushing a tag `X.Y.Z` (no `v`) runs
+  `release.yml`, which publishes main.js/manifest.json/styles.css for BRAT installs.
+  Bump with `node scripts/bump-version.js X.Y.Z`.
   Nothing has been tested yet inside real Obsidian or against the live API.
   Verify against the real environment first.
 - "Closed" doesn't distinguish completed from deleted.

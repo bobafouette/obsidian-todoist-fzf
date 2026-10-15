@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check tag matches manifest.json and versions.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const tag = process.env.TAG;
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+            if (manifest.version !== tag) {
+              console.error(`Tag ${tag} does not match manifest.json version ${manifest.version}`);
+              process.exit(1);
+            }
+            if (!Object.prototype.hasOwnProperty.call(versions, tag)) {
+              console.error(`versions.json has no entry for ${tag}`);
+              process.exit(1);
+            }
+            console.log(`Tag ${tag} matches manifest.json and versions.json`);
+          '
+
+      - name: Repo checks
+        run: node scripts/check.js
+
+      - name: Tests
+        run: node --test 'test/*.test.js'
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" main.js manifest.json styles.css --title "$TAG" --generate-notes
