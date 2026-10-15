@@ -1,0 +1,9 @@
+{
+  "id": "task-note-bridge",
+  "name": "Task Note Bridge",
+  "version": "0.2.0",
+  "minAppVersion": "1.4.0",
+  "description": "Open a Todoist task as an Obsidian note on demand, link them both ways, and log the work in your daily note.",
+  "author": "You",
+  "isDesktopOnly": false
+}
