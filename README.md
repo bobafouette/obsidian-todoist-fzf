@@ -73,9 +73,12 @@ manifest, secrets) and `node --test 'test/*.test.js'` before committing.
 1. `node scripts/bump-version.js 0.3.0` (add a second argument to change
    `minAppVersion`). It updates `manifest.json` and `versions.json` and prints
    the next commands.
-2. Commit, tag and push: `git commit -am "Release 0.3.0"`, `git tag 0.3.0`,
-   `git push && git push origin 0.3.0`. Tags have no `v` prefix.
-3. The release workflow checks the tag against `manifest.json`, runs the checks
-   and tests, and publishes a GitHub release with `main.js`, `manifest.json`
-   and `styles.css` attached.
-4. BRAT picks up the new release on its next update check.
+2. Commit and push (or merge the PR) so the bump is on `main`.
+3. Create the release, either way (tags have no `v` prefix):
+   - **Web page:** Releases → Draft a new release → choose a tag → type
+     `0.3.0`, target `main` → Publish release.
+   - **Command line:** `git tag 0.3.0 && git push origin 0.3.0`.
+4. The release workflow checks the tag against `manifest.json`, runs the checks
+   and tests, and attaches `main.js`, `manifest.json` and `styles.css` to the
+   release (creating it if you pushed only a tag).
+5. BRAT picks up the new release on its next update check.
