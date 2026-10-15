@@ -24,7 +24,8 @@ write. This plugin lets a task reach its note (and a note reach its task) withou
 - QuickAdd's Todoist example script: picker that inserts checkboxes (and completes tasks by default).
 
 ## What the plugin does (v0.2.0)
-- **Open task note** (filtered / all): picker → create or open `Tasks/<title>.md` with
+- **Open task note** (filtered / all): picker → create or open `Tasks/<title>.md` (spaces and forbidden
+  characters replaced by the `fileNameSeparator` setting, default `-`) with
   frontmatter `todoist_id`, `todoist_url`, `due`, `todoist_status` (open|closed), `created`;
   writes `[📝 Obsidian note](obsidian://…)` into the task description; logs
   `- HH:mm [[note]]` under a heading in today's daily note (once per day).

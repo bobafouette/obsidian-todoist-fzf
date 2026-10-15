@@ -18,6 +18,7 @@ const DEFAULTS = {
   token: '',
   filter: 'overdue | today',
   folder: 'Tasks',
+  fileNameSeparator: '-',
   template: '',
   writeBackLink: true,
   updateLinkOnRename: true,
@@ -30,15 +31,30 @@ const DEFAULTS = {
 
 // ---------- pure helpers ----------
 
-function sanitizeTitle(s) {
-  const t = String(s || '')
+const FORBIDDEN_RE = /[\\/:*?"<>|#^[\]]/g;
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Builds a note file name from a task title. `sep` replaces spaces and
+// characters Obsidian can't use in file names; runs of separators collapse to one.
+function sanitizeTitle(s, sep = ' ') {
+  sep = String(sep == null ? ' ' : sep).replace(FORBIDDEN_RE, '');
+  if (!sep || /^\s+$/.test(sep)) sep = ' ';
+  let t = String(s || '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // markdown links -> text
-    .replace(/[\\/:*?"<>|#^[\]]/g, ' ')
+    .replace(FORBIDDEN_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 100)
     .trim();
-  return t || 'Untitled task';
+  if (sep !== ' ') {
+    const e = escapeRegExp(sep);
+    t = t.replace(new RegExp(`(?:\\s|${e})+`, 'g'), sep)
+      .replace(new RegExp(`^(?:${e})+|(?:${e})+$`, 'g'), '');
+  }
+  return t || (sep === ' ' ? 'Untitled task' : `Untitled${sep}task`);
 }
 
 function dueOf(task) {
@@ -358,10 +374,11 @@ class TaskNoteBridge extends Plugin {
     const prefix = raw && raw !== '/' ? `${raw}/` : '';
     if (prefix && !this.app.vault.getAbstractFileByPath(raw)) await this.app.vault.createFolder(raw);
 
-    const base = sanitizeTitle(task.content);
+    const sep = this.settings.fileNameSeparator;
+    const base = sanitizeTitle(task.content, sep);
     let path = normalizePath(`${prefix}${base}.md`);
     for (let i = 2; this.app.vault.getAbstractFileByPath(path); i++) {
-      path = normalizePath(`${prefix}${base} ${i}.md`);
+      path = normalizePath(`${prefix}${sanitizeTitle(`${base} ${i}`, sep)}.md`);
     }
 
     let body = defaultBody(task);
@@ -501,6 +518,10 @@ class BridgeSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Task notes folder')
       .addText((t) => t.setValue(s.folder).onChange(async (v) => { s.folder = v.trim(); await save(); }));
+
+    new Setting(containerEl).setName('File name separator')
+      .setDesc('Replaces spaces and characters not allowed in file names when naming a new task note (e.g. "-" gives "Fix-the-printer.md"). Leave empty to keep spaces. Existing notes are not renamed.')
+      .addText((t) => t.setPlaceholder('-').setValue(s.fileNameSeparator).onChange(async (v) => { s.fileNameSeparator = v; await save(); }));
 
     new Setting(containerEl).setName('Note template (optional)')
       .setDesc('Path to a note used as template. Placeholders: {{title}} {{description}} {{due}} {{url}} {{id}} {{date}}.')
