@@ -135,7 +135,7 @@ function renderTemplate(tpl, task) {
     id: String(task.id),
     date: moment().format('YYYY-MM-DD'),
   };
-  return tpl.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vals ? vals[k] : m));
+  return tpl.replace(/\{\{(\w+)\}\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vals, k) ? vals[k] : m));
 }
 
 function defaultBody(task) {

@@ -480,12 +480,9 @@ describe('renderTemplate', () => {
     assert.equal(renderTemplate('{{title}}', { id: 1, content: 'Pay $& $1 $$' }), 'Pay $& $1 $$');
   });
 
-  // SUSPECTED BUG (minor): `k in vals` also matches inherited Object.prototype
-  // keys, so {{constructor}} / {{toString}} render as function source instead
-  // of being left untouched like other unknown placeholders.
-  test('CURRENT BEHAVIOUR: inherited keys like {{constructor}} are not left untouched', () => {
-    const out = renderTemplate('{{constructor}}', task);
-    assert.notEqual(out, '{{constructor}}');
-    assert.match(out, /function Object/);
+  test('inherited keys like {{constructor}} are left untouched (#3)', () => {
+    for (const k of ['constructor', 'toString', '__proto__']) {
+      assert.equal(renderTemplate(`{{${k}}}`, task), `{{${k}}}`);
+    }
   });
 });
