@@ -1,4 +1,6 @@
 'use strict';
+// Fixed timezone so UTC -> local conversions are deterministic on any machine.
+process.env.TZ = 'Europe/Paris';
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -474,13 +476,31 @@ describe('inlineLine', () => {
     assert.equal(inlineLine({ id: '1', content: 'x' }, ''), '- [x](https://app.todoist.com/app/task/1)');
   });
 
-  // SUSPECTED BUG (minor): Todoist returns UTC datetimes with a trailing "Z"
-  // for fixed-timezone tasks; formatDue just slices the string, so the line
-  // shows the UTC time, not local time.
-  test('CURRENT BEHAVIOUR: UTC datetime ("Z") is shown as-is, not converted to local time', () => {
+  test('UTC datetime ("Z") of a fixed-timezone task is shown in local time', () => {
     assert.equal(
       inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00Z' } }),
+      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20 09:00',
+    );
+  });
+
+  test('UTC datetime converted across midnight changes the local date', () => {
+    assert.equal(
+      inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T23:30:00Z' } }),
+      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-21 01:30',
+    );
+  });
+
+  test('floating datetime (no "Z") is kept as-is', () => {
+    assert.equal(
+      inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00' } }),
       '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20 07:00',
+    );
+  });
+
+  test('date-only due is kept as-is', () => {
+    assert.equal(
+      inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20' } }),
+      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20',
     );
   });
 });
@@ -522,6 +542,12 @@ describe('renderTemplate', () => {
 
   test('missing fields render as empty strings', () => {
     assert.equal(renderTemplate('[{{title}}][{{description}}][{{due}}]', { id: 1 }), '[][][]');
+  });
+
+  test('UTC due ("Z") becomes a stable local datetime (same value as frontmatter "due")', () => {
+    const t = { id: 1, due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00Z' } };
+    assert.equal(renderTemplate('{{due}}', t), '2026-10-20T09:00:00');
+    assert.equal(renderTemplate('{{due}}', t), renderTemplate('{{due}}', t));
   });
 
   test('due falls back to the date when there is no datetime', () => {

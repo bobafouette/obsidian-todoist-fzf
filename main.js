@@ -57,8 +57,11 @@ function sanitizeTitle(s, sep = ' ') {
   return (t || `untitled${sep}task`).toLowerCase();
 }
 
+// Fixed-timezone tasks come back in UTC ("…Z"): convert to local time.
+// Floating datetimes and plain dates are already local and kept as-is.
 function dueOf(task) {
-  return task && task.due ? (task.due.datetime || task.due.date || null) : null;
+  const due = task && task.due ? (task.due.datetime || task.due.date || null) : null;
+  return due && /Z$/i.test(due) ? moment(due).format('YYYY-MM-DDTHH:mm:ss') : due;
 }
 
 function taskUrl(id) {
