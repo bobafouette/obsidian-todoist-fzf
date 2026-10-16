@@ -87,11 +87,21 @@ describe('sanitizeTitle', () => {
     assert.equal(sanitizeTitle(once, '-'), once);
   });
 
-  // SUSPECTED BUG: a title starting with "." yields a dot-file name
-  // (e.g. ".htaccess-review.md"), which Obsidian ignores/hides in the vault.
-  // Test documents current behaviour.
-  test('CURRENT BEHAVIOUR: leading dot is kept (hidden file in Obsidian)', () => {
-    assert.equal(sanitizeTitle('.htaccess review', '-'), '.htaccess-review');
+  test('strips leading dots so the note is not a hidden dot-file (#2)', () => {
+    assert.equal(sanitizeTitle('.htaccess review', '-'), 'htaccess-review');
+    assert.equal(sanitizeTitle('...env. setup', '-'), 'env.-setup');
+    assert.equal(sanitizeTitle('. hidden', ' '), 'hidden');
+  });
+
+  test('strips trailing dots and separators left behind by them', () => {
+    assert.equal(sanitizeTitle('Wait for it...', '-'), 'wait-for-it');
+    assert.equal(sanitizeTitle('Done. -', '-'), 'done');
+    assert.equal(sanitizeTitle('.a b.', '.'), 'a.b');
+  });
+
+  test('a title made only of dots falls back to "untitled<sep>task"', () => {
+    assert.equal(sanitizeTitle('...', '-'), 'untitled-task');
+    assert.equal(sanitizeTitle(' . . ', '.'), 'untitled.task');
   });
 });
 

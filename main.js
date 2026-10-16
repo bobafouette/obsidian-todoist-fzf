@@ -50,11 +50,10 @@ function sanitizeTitle(s, sep = ' ') {
     .trim()
     .slice(0, 100)
     .trim();
-  if (sep !== ' ') {
-    const e = escapeRegExp(sep);
-    t = t.replace(new RegExp(`(?:\\s|${e})+`, 'g'), sep)
-      .replace(new RegExp(`^(?:${e})+|(?:${e})+$`, 'g'), '');
-  }
+  const e = escapeRegExp(sep);
+  if (sep !== ' ') t = t.replace(new RegExp(`(?:\\s|${e})+`, 'g'), sep);
+  // No leading/trailing dots or separators: Obsidian hides dot-files (#2).
+  t = t.replace(new RegExp(`^(?:\\.|\\s|${e})+|(?:\\.|\\s|${e})+$`, 'g'), '');
   return (t || `untitled${sep}task`).toLowerCase();
 }
 
