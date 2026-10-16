@@ -1,4 +1,6 @@
 'use strict';
+// Fixed timezone so UTC -> local conversions are deterministic on any machine.
+process.env.TZ = 'Europe/Paris';
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -87,11 +89,21 @@ describe('sanitizeTitle', () => {
     assert.equal(sanitizeTitle(once, '-'), once);
   });
 
-  // SUSPECTED BUG: a title starting with "." yields a dot-file name
-  // (e.g. ".htaccess-review.md"), which Obsidian ignores/hides in the vault.
-  // Test documents current behaviour.
-  test('CURRENT BEHAVIOUR: leading dot is kept (hidden file in Obsidian)', () => {
-    assert.equal(sanitizeTitle('.htaccess review', '-'), '.htaccess-review');
+  test('strips leading dots so the note is not a hidden dot-file (#2)', () => {
+    assert.equal(sanitizeTitle('.htaccess review', '-'), 'htaccess-review');
+    assert.equal(sanitizeTitle('...env. setup', '-'), 'env.-setup');
+    assert.equal(sanitizeTitle('. hidden', ' '), 'hidden');
+  });
+
+  test('strips trailing dots and separators left behind by them', () => {
+    assert.equal(sanitizeTitle('Wait for it...', '-'), 'wait-for-it');
+    assert.equal(sanitizeTitle('Done. -', '-'), 'done');
+    assert.equal(sanitizeTitle('.a b.', '.'), 'a.b');
+  });
+
+  test('a title made only of dots falls back to "untitled<sep>task"', () => {
+    assert.equal(sanitizeTitle('...', '-'), 'untitled-task');
+    assert.equal(sanitizeTitle(' . . ', '.'), 'untitled.task');
   });
 });
 
@@ -192,11 +204,27 @@ describe('withLink with MENTION_RE (💬 inline mention)', () => {
     assert.equal(withLink(desc, MENTION, MENTION_RE), desc);
   });
 
-  // Note: MENTION_RE is not global, so if a description already had two
-  // mentions (e.g. edited by hand), only the first is replaced.
-  test('CURRENT BEHAVIOUR: only the first of several existing mentions is replaced', () => {
+  test('replaces every existing mention: the first becomes the new one, the rest are removed', () => {
     const desc = `${MENTION}\n${MENTION}`;
-    assert.equal(withLink(desc, MENTION_2, MENTION_RE), `${MENTION_2}\n${MENTION}`);
+    assert.equal(withLink(desc, MENTION_2, MENTION_RE), MENTION_2);
+  });
+
+  test('several mentions spread through the text: new one written once, at the first position', () => {
+    const desc = `Intro\n\n${MENTION}\nmiddle\n\n${MENTION_2}\nend ${MENTION}`;
+    const out = withLink(desc, MENTION_2, MENTION_RE);
+    assert.equal(out, `Intro\n\n${MENTION_2}\nmiddle\nend`);
+    assert.equal(out.split('💬').length - 1, 1);
+  });
+
+  test('removing extra mentions leaves the 📝 note link intact', () => {
+    const desc = `${NOTE_LINK}\n\n${MENTION}\n\n${MENTION}`;
+    assert.equal(withLink(desc, MENTION_2, MENTION_RE), `${NOTE_LINK}\n\n${MENTION_2}`);
+  });
+
+  test('does not leave MENTION_RE stateful', () => {
+    withLink(`${MENTION}\n${MENTION}`, MENTION_2, MENTION_RE);
+    assert.equal(MENTION_RE.global, false);
+    assert.equal(MENTION_RE.lastIndex, 0);
   });
 });
 
@@ -227,6 +255,10 @@ describe('MENTION_RE', () => {
 
 // ---------------------------------------------------------------- stripLink
 describe('stripLink', () => {
+  test('several mentions in the middle each collapse to a single gap', () => {
+    assert.equal(stripLink(`a\n\n${MENTION}\n\nb\n\n${MENTION_2}\n\nc`), 'a\n\nb\n\nc');
+  });
+
   test('removes the 📝 link and trims', () => {
     assert.equal(stripLink(`Buy licences\n\n${NOTE_LINK}`), 'Buy licences');
   });
@@ -237,6 +269,11 @@ describe('stripLink', () => {
 
   test('removes both at once', () => {
     assert.equal(stripLink(`Body\n\n${NOTE_LINK}\n\n${MENTION}`), 'Body');
+  });
+
+  test('removes every 📝 link and 💬 mention, not just the first', () => {
+    assert.equal(stripLink(`Body ${MENTION} ${NOTE_LINK} ${MENTION_2} ${NOTE_LINK}`), 'Body');
+    assert.ok(!stripLink(`${MENTION}\nx\n${MENTION}`).includes('💬'));
   });
 
   test('leaves other links and text untouched', () => {
@@ -250,8 +287,25 @@ describe('stripLink', () => {
     assert.equal(stripLink(NOTE_LINK), '');
   });
 
-  test('CURRENT BEHAVIOUR: a link in the middle leaves its surrounding blank lines', () => {
-    assert.equal(stripLink(`a\n\n${NOTE_LINK}\n\nb`), 'a\n\n\n\nb');
+  test('a link in the middle collapses its surrounding blank lines to one', () => {
+    assert.equal(stripLink(`a\n\n${NOTE_LINK}\n\nb`), 'a\n\nb');
+    assert.equal(stripLink(`a\n\n${MENTION}\n\nb`), 'a\n\nb');
+  });
+
+  test('a link between single newlines leaves a single newline', () => {
+    assert.equal(stripLink(`a\n${NOTE_LINK}\nb`), 'a\nb');
+  });
+
+  test('both links in the middle leave one blank line', () => {
+    assert.equal(stripLink(`a\n\n${NOTE_LINK}\n\n${MENTION}\n\nb`), 'a\n\nb');
+  });
+
+  test('a link sharing a line with text is just removed', () => {
+    assert.equal(stripLink(`a\n\nsee ${NOTE_LINK} here\n\nb`), 'a\n\nsee  here\n\nb');
+  });
+
+  test('blank lines elsewhere in the description are left alone', () => {
+    assert.equal(stripLink(`a\n\n\n\nb\n\n${NOTE_LINK}\n\nc`), 'a\n\n\n\nb\n\nc');
   });
 });
 
@@ -326,10 +380,14 @@ describe('insertUnderHeading', () => {
     assert.equal(insertUnderHeading('## Log\n- a', '## Log', LINE), `## Log\n- a\n${LINE}`);
   });
 
-  // Possible cosmetic issue: on an empty daily note the result starts with blank lines.
-  test('CURRENT BEHAVIOUR: empty note gets leading blank lines', () => {
-    assert.equal(insertUnderHeading('', '## Log', LINE), `\n\n## Log\n${LINE}\n`);
-    assert.equal(insertUnderHeading('', '', LINE), `\n${LINE}\n`);
+  test('empty note: heading and line with no leading blank lines (#5)', () => {
+    assert.equal(insertUnderHeading('', '## Log', LINE), `## Log\n${LINE}\n`);
+    assert.equal(insertUnderHeading('', '', LINE), `${LINE}\n`);
+  });
+
+  test('whitespace-only note is treated as empty', () => {
+    assert.equal(insertUnderHeading(' \n\n\t\n', '## Log', LINE), `## Log\n${LINE}\n`);
+    assert.equal(insertUnderHeading('\n \n', '', LINE), `${LINE}\n`);
   });
 });
 
@@ -418,13 +476,31 @@ describe('inlineLine', () => {
     assert.equal(inlineLine({ id: '1', content: 'x' }, ''), '- [x](https://app.todoist.com/app/task/1)');
   });
 
-  // SUSPECTED BUG (minor): Todoist returns UTC datetimes with a trailing "Z"
-  // for fixed-timezone tasks; formatDue just slices the string, so the line
-  // shows the UTC time, not local time.
-  test('CURRENT BEHAVIOUR: UTC datetime ("Z") is shown as-is, not converted to local time', () => {
+  test('UTC datetime ("Z") of a fixed-timezone task is shown in local time', () => {
     assert.equal(
       inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00Z' } }),
+      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20 09:00',
+    );
+  });
+
+  test('UTC datetime converted across midnight changes the local date', () => {
+    assert.equal(
+      inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T23:30:00Z' } }),
+      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-21 01:30',
+    );
+  });
+
+  test('floating datetime (no "Z") is kept as-is', () => {
+    assert.equal(
+      inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00' } }),
       '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20 07:00',
+    );
+  });
+
+  test('date-only due is kept as-is', () => {
+    assert.equal(
+      inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20' } }),
+      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20',
     );
   });
 });
@@ -468,6 +544,12 @@ describe('renderTemplate', () => {
     assert.equal(renderTemplate('[{{title}}][{{description}}][{{due}}]', { id: 1 }), '[][][]');
   });
 
+  test('UTC due ("Z") becomes a stable local datetime (same value as frontmatter "due")', () => {
+    const t = { id: 1, due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00Z' } };
+    assert.equal(renderTemplate('{{due}}', t), '2026-10-20T09:00:00');
+    assert.equal(renderTemplate('{{due}}', t), renderTemplate('{{due}}', t));
+  });
+
   test('due falls back to the date when there is no datetime', () => {
     assert.equal(renderTemplate('{{due}}', { id: 1, due: { date: '2026-11-01' } }), '2026-11-01');
   });
@@ -476,12 +558,9 @@ describe('renderTemplate', () => {
     assert.equal(renderTemplate('{{title}}', { id: 1, content: 'Pay $& $1 $$' }), 'Pay $& $1 $$');
   });
 
-  // SUSPECTED BUG (minor): `k in vals` also matches inherited Object.prototype
-  // keys, so {{constructor}} / {{toString}} render as function source instead
-  // of being left untouched like other unknown placeholders.
-  test('CURRENT BEHAVIOUR: inherited keys like {{constructor}} are not left untouched', () => {
-    const out = renderTemplate('{{constructor}}', task);
-    assert.notEqual(out, '{{constructor}}');
-    assert.match(out, /function Object/);
+  test('inherited keys like {{constructor}} are left untouched (#3)', () => {
+    for (const k of ['constructor', 'toString', '__proto__']) {
+      assert.equal(renderTemplate(`{{${k}}}`, task), `{{${k}}}`);
+    }
   });
 });

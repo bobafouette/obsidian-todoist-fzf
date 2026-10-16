@@ -50,16 +50,18 @@ function sanitizeTitle(s, sep = ' ') {
     .trim()
     .slice(0, 100)
     .trim();
-  if (sep !== ' ') {
-    const e = escapeRegExp(sep);
-    t = t.replace(new RegExp(`(?:\\s|${e})+`, 'g'), sep)
-      .replace(new RegExp(`^(?:${e})+|(?:${e})+$`, 'g'), '');
-  }
+  const e = escapeRegExp(sep);
+  if (sep !== ' ') t = t.replace(new RegExp(`(?:\\s|${e})+`, 'g'), sep);
+  // No leading/trailing dots or separators: Obsidian hides dot-files (#2).
+  t = t.replace(new RegExp(`^(?:\\.|\\s|${e})+|(?:\\.|\\s|${e})+$`, 'g'), '');
   return (t || `untitled${sep}task`).toLowerCase();
 }
 
+// Fixed-timezone tasks come back in UTC ("…Z"): convert to local time.
+// Floating datetimes and plain dates are already local and kept as-is.
 function dueOf(task) {
-  return task && task.due ? (task.due.datetime || task.due.date || null) : null;
+  const due = task && task.due ? (task.due.datetime || task.due.date || null) : null;
+  return due && /Z$/i.test(due) ? moment(due).format('YYYY-MM-DDTHH:mm:ss') : due;
 }
 
 function taskUrl(id) {
@@ -71,18 +73,49 @@ function encodeUriPart(s) {
   return encodeURIComponent(s).replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
-function stripLink(desc) {
-  return (desc || '').replace(LINK_RE, '').replace(MENTION_RE, '').trim();
+// Removes the first match of re (non-global, so exec keeps no lastIndex). A link alone on
+// its line takes the line with it, and the gaps around it become one separator (a blank
+// line if either gap had one).
+function cutLink(desc, re) {
+  const m = re.exec(desc);
+  if (!m) return desc;
+  const before = desc.slice(0, m.index);
+  const after = desc.slice(m.index + m[0].length);
+  if (!/(^|\n)[ \t]*$/.test(before) || !/^[ \t]*(\n|$)/.test(after)) return before + after;
+  const gapBefore = before.match(/\s*$/)[0];
+  const gapAfter = after.match(/^\s*/)[0];
+  const b = before.slice(0, before.length - gapBefore.length);
+  const a = after.slice(gapAfter.length);
+  if (!b || !a) return b + a;
+  return b + (/\n[ \t]*\n/.test(gapBefore) || /\n[ \t]*\n/.test(gapAfter) ? '\n\n' : '\n') + a;
 }
 
+function stripLink(desc) {
+  let d = desc || '';
+  for (const re of [LINK_RE, MENTION_RE]) {
+    for (let prev; prev !== d;) { prev = d; d = cutLink(d, re); }
+  }
+  return d.trim();
+}
+
+// Replaces every existing match of `re`: the first becomes `link`, the others
+// are removed together with the whitespace before them.
 function withLink(desc, link, re = LINK_RE) {
   const d = desc || '';
-  if (re.test(d)) return d.replace(re, () => link);
+  if (re.test(d)) {
+    let first = true;
+    return d.replace(new RegExp(`(\\s*)(?:${re.source})`, 'g'), (m, lead) => {
+      if (!first) return '';
+      first = false;
+      return lead + link;
+    });
+  }
   return d.trim() ? `${d.trimEnd()}\n\n${link}` : link;
 }
 
 function insertUnderHeading(data, heading, line) {
   const h = (heading || '').trim();
+  if (!data.trim()) return h ? `${h}\n${line}\n` : `${line}\n`;
   if (!h) return `${data.replace(/\s*$/, '')}\n${line}\n`;
   const lines = data.split('\n');
   const idx = lines.findIndex((l) => l.trim() === h);
@@ -134,7 +167,7 @@ function renderTemplate(tpl, task) {
     id: String(task.id),
     date: moment().format('YYYY-MM-DD'),
   };
-  return tpl.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vals ? vals[k] : m));
+  return tpl.replace(/\{\{(\w+)\}\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vals, k) ? vals[k] : m));
 }
 
 function defaultBody(task) {
