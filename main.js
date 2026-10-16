@@ -71,8 +71,24 @@ function encodeUriPart(s) {
   return encodeURIComponent(s).replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
+// Removes the first match of re. A link alone on its line takes the line with it, and the
+// gaps around it become one separator (a blank line if either gap had one).
+function cutLink(desc, re) {
+  const m = re.exec(desc);
+  if (!m) return desc;
+  const before = desc.slice(0, m.index);
+  const after = desc.slice(m.index + m[0].length);
+  if (!/(^|\n)[ \t]*$/.test(before) || !/^[ \t]*(\n|$)/.test(after)) return before + after;
+  const gapBefore = before.match(/\s*$/)[0];
+  const gapAfter = after.match(/^\s*/)[0];
+  const b = before.slice(0, before.length - gapBefore.length);
+  const a = after.slice(gapAfter.length);
+  if (!b || !a) return b + a;
+  return b + (/\n[ \t]*\n/.test(gapBefore) || /\n[ \t]*\n/.test(gapAfter) ? '\n\n' : '\n') + a;
+}
+
 function stripLink(desc) {
-  return (desc || '').replace(LINK_RE, '').replace(MENTION_RE, '').trim();
+  return cutLink(cutLink(desc || '', LINK_RE), MENTION_RE).trim();
 }
 
 function withLink(desc, link, re = LINK_RE) {

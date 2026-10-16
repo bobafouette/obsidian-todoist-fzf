@@ -250,8 +250,25 @@ describe('stripLink', () => {
     assert.equal(stripLink(NOTE_LINK), '');
   });
 
-  test('CURRENT BEHAVIOUR: a link in the middle leaves its surrounding blank lines', () => {
-    assert.equal(stripLink(`a\n\n${NOTE_LINK}\n\nb`), 'a\n\n\n\nb');
+  test('a link in the middle collapses its surrounding blank lines to one', () => {
+    assert.equal(stripLink(`a\n\n${NOTE_LINK}\n\nb`), 'a\n\nb');
+    assert.equal(stripLink(`a\n\n${MENTION}\n\nb`), 'a\n\nb');
+  });
+
+  test('a link between single newlines leaves a single newline', () => {
+    assert.equal(stripLink(`a\n${NOTE_LINK}\nb`), 'a\nb');
+  });
+
+  test('both links in the middle leave one blank line', () => {
+    assert.equal(stripLink(`a\n\n${NOTE_LINK}\n\n${MENTION}\n\nb`), 'a\n\nb');
+  });
+
+  test('a link sharing a line with text is just removed', () => {
+    assert.equal(stripLink(`a\n\nsee ${NOTE_LINK} here\n\nb`), 'a\n\nsee  here\n\nb');
+  });
+
+  test('blank lines elsewhere in the description are left alone', () => {
+    assert.equal(stripLink(`a\n\n\n\nb\n\n${NOTE_LINK}\n\nc`), 'a\n\n\n\nb\n\nc');
   });
 });
 
