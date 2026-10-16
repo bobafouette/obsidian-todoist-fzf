@@ -57,8 +57,9 @@ write. This plugin lets a task reach its note (and a note reach its task) withou
   in `test/` (`node --test 'test/*.test.js'`, Node built-ins only, no package.json).
 - CI (`.github/workflows/ci.yml`) runs `node scripts/check.js` (syntax, mobile-safety,
   manifest/versions.json, secrets) and the tests. Publishing a release (web page) or pushing a tag `X.Y.Z` (no `v`) runs
-  `release.yml`, which publishes main.js/manifest.json/styles.css for BRAT installs.
-  Bump with `node scripts/bump-version.js X.Y.Z`.
+  `release.yml`, which writes the tag version into manifest.json/versions.json and publishes
+  main.js/manifest.json/styles.css for BRAT installs. `node scripts/bump-version.js X.Y.Z` is optional
+  (keeps the repo's manifest current; needed to change minAppVersion).
   Nothing has been tested yet inside real Obsidian or against the live API.
   Verify against the real environment first.
 - "Closed" doesn't distinguish completed from deleted.
