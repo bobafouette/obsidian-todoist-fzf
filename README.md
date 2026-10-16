@@ -70,15 +70,15 @@ No build step: edit `main.js` directly. Run `node scripts/check.js` (syntax,
 manifest, secrets) and `node --test 'test/*.test.js'` before committing.
 
 ## Releasing
-1. `node scripts/bump-version.js 0.3.0` (add a second argument to change
-   `minAppVersion`). It updates `manifest.json` and `versions.json` and prints
-   the next commands.
-2. Commit and push (or merge the PR) so the bump is on `main`.
-3. Create the release, either way (tags have no `v` prefix):
+1. Create the release, either way (tags have no `v` prefix):
    - **Web page:** Releases → Draft a new release → choose a tag → type
      `0.3.0`, target `main` → Publish release.
    - **Command line:** `git tag 0.3.0 && git push origin 0.3.0`.
-4. The release workflow checks the tag against `manifest.json`, runs the checks
-   and tests, and attaches `main.js`, `manifest.json` and `styles.css` to the
-   release (creating it if you pushed only a tag).
-5. BRAT picks up the new release on its next update check.
+2. The release workflow writes the tag version into `manifest.json` and
+   `versions.json`, runs the checks and tests, and attaches `main.js`,
+   `manifest.json` and `styles.css` to the release (creating it if you pushed
+   only a tag). It refuses a tag lower than the version in `manifest.json`.
+3. Optional, to keep the repository's own `manifest.json` current (and needed
+   to change `minAppVersion`): `node scripts/bump-version.js 0.3.0 [minAppVersion]`
+   and merge it to `main` before tagging.
+4. BRAT picks up the new release on its next update check.
