@@ -70,8 +70,9 @@ function encodeUriPart(s) {
   return encodeURIComponent(s).replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
-// Removes the first match of re. A link alone on its line takes the line with it, and the
-// gaps around it become one separator (a blank line if either gap had one).
+// Removes the first match of re (non-global, so exec keeps no lastIndex). A link alone on
+// its line takes the line with it, and the gaps around it become one separator (a blank
+// line if either gap had one).
 function cutLink(desc, re) {
   const m = re.exec(desc);
   if (!m) return desc;
@@ -87,12 +88,25 @@ function cutLink(desc, re) {
 }
 
 function stripLink(desc) {
-  return cutLink(cutLink(desc || '', LINK_RE), MENTION_RE).trim();
+  let d = desc || '';
+  for (const re of [LINK_RE, MENTION_RE]) {
+    for (let prev; prev !== d;) { prev = d; d = cutLink(d, re); }
+  }
+  return d.trim();
 }
 
+// Replaces every existing match of `re`: the first becomes `link`, the others
+// are removed together with the whitespace before them.
 function withLink(desc, link, re = LINK_RE) {
   const d = desc || '';
-  if (re.test(d)) return d.replace(re, () => link);
+  if (re.test(d)) {
+    let first = true;
+    return d.replace(new RegExp(`(\\s*)(?:${re.source})`, 'g'), (m, lead) => {
+      if (!first) return '';
+      first = false;
+      return lead + link;
+    });
+  }
   return d.trim() ? `${d.trimEnd()}\n\n${link}` : link;
 }
 

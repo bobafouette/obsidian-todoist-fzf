@@ -202,11 +202,27 @@ describe('withLink with MENTION_RE (💬 inline mention)', () => {
     assert.equal(withLink(desc, MENTION, MENTION_RE), desc);
   });
 
-  // Note: MENTION_RE is not global, so if a description already had two
-  // mentions (e.g. edited by hand), only the first is replaced.
-  test('CURRENT BEHAVIOUR: only the first of several existing mentions is replaced', () => {
+  test('replaces every existing mention: the first becomes the new one, the rest are removed', () => {
     const desc = `${MENTION}\n${MENTION}`;
-    assert.equal(withLink(desc, MENTION_2, MENTION_RE), `${MENTION_2}\n${MENTION}`);
+    assert.equal(withLink(desc, MENTION_2, MENTION_RE), MENTION_2);
+  });
+
+  test('several mentions spread through the text: new one written once, at the first position', () => {
+    const desc = `Intro\n\n${MENTION}\nmiddle\n\n${MENTION_2}\nend ${MENTION}`;
+    const out = withLink(desc, MENTION_2, MENTION_RE);
+    assert.equal(out, `Intro\n\n${MENTION_2}\nmiddle\nend`);
+    assert.equal(out.split('💬').length - 1, 1);
+  });
+
+  test('removing extra mentions leaves the 📝 note link intact', () => {
+    const desc = `${NOTE_LINK}\n\n${MENTION}\n\n${MENTION}`;
+    assert.equal(withLink(desc, MENTION_2, MENTION_RE), `${NOTE_LINK}\n\n${MENTION_2}`);
+  });
+
+  test('does not leave MENTION_RE stateful', () => {
+    withLink(`${MENTION}\n${MENTION}`, MENTION_2, MENTION_RE);
+    assert.equal(MENTION_RE.global, false);
+    assert.equal(MENTION_RE.lastIndex, 0);
   });
 });
 
@@ -237,6 +253,10 @@ describe('MENTION_RE', () => {
 
 // ---------------------------------------------------------------- stripLink
 describe('stripLink', () => {
+  test('several mentions in the middle each collapse to a single gap', () => {
+    assert.equal(stripLink(`a\n\n${MENTION}\n\nb\n\n${MENTION_2}\n\nc`), 'a\n\nb\n\nc');
+  });
+
   test('removes the 📝 link and trims', () => {
     assert.equal(stripLink(`Buy licences\n\n${NOTE_LINK}`), 'Buy licences');
   });
@@ -247,6 +267,11 @@ describe('stripLink', () => {
 
   test('removes both at once', () => {
     assert.equal(stripLink(`Body\n\n${NOTE_LINK}\n\n${MENTION}`), 'Body');
+  });
+
+  test('removes every 📝 link and 💬 mention, not just the first', () => {
+    assert.equal(stripLink(`Body ${MENTION} ${NOTE_LINK} ${MENTION_2} ${NOTE_LINK}`), 'Body');
+    assert.ok(!stripLink(`${MENTION}\nx\n${MENTION}`).includes('💬'));
   });
 
   test('leaves other links and text untouched', () => {
