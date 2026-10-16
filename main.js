@@ -83,6 +83,7 @@ function withLink(desc, link, re = LINK_RE) {
 
 function insertUnderHeading(data, heading, line) {
   const h = (heading || '').trim();
+  if (!data.trim()) return h ? `${h}\n${line}\n` : `${line}\n`;
   if (!h) return `${data.replace(/\s*$/, '')}\n${line}\n`;
   const lines = data.split('\n');
   const idx = lines.findIndex((l) => l.trim() === h);

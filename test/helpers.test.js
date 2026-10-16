@@ -326,10 +326,14 @@ describe('insertUnderHeading', () => {
     assert.equal(insertUnderHeading('## Log\n- a', '## Log', LINE), `## Log\n- a\n${LINE}`);
   });
 
-  // Possible cosmetic issue: on an empty daily note the result starts with blank lines.
-  test('CURRENT BEHAVIOUR: empty note gets leading blank lines', () => {
-    assert.equal(insertUnderHeading('', '## Log', LINE), `\n\n## Log\n${LINE}\n`);
-    assert.equal(insertUnderHeading('', '', LINE), `\n${LINE}\n`);
+  test('empty note: heading and line with no leading blank lines (#5)', () => {
+    assert.equal(insertUnderHeading('', '## Log', LINE), `## Log\n${LINE}\n`);
+    assert.equal(insertUnderHeading('', '', LINE), `${LINE}\n`);
+  });
+
+  test('whitespace-only note is treated as empty', () => {
+    assert.equal(insertUnderHeading(' \n\n\t\n', '## Log', LINE), `## Log\n${LINE}\n`);
+    assert.equal(insertUnderHeading('\n \n', '', LINE), `${LINE}\n`);
   });
 });
 
