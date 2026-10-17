@@ -59,7 +59,8 @@ write. This plugin lets a task reach its note (and a note reach its task) withou
   manifest/versions.json, secrets) and the tests. Publishing a release (web page) or pushing a tag `X.Y.Z` (no `v`) runs
   `release.yml`, which writes the tag version into manifest.json/versions.json and publishes
   main.js/manifest.json/styles.css for BRAT installs. `node scripts/bump-version.js X.Y.Z` is optional
-  (keeps the repo's manifest current; needed to change minAppVersion).
+  (keeps the repo's manifest current; needed to change minAppVersion). Never hand-edit
+  the manifest version: check.js fails unless versions.json has a matching entry.
   Nothing has been tested yet inside real Obsidian or against the live API.
   Verify against the real environment first.
 - "Closed" doesn't distinguish completed from deleted.
