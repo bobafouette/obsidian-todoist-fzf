@@ -2,6 +2,8 @@
 
 Todoist stays the alarm clock. Obsidian holds the thinking.
 
+![Fuzzy-finding a task and opening its note](assets/fzf.gif)
+
 ## Install (desktop and Android)
 
 ### With BRAT (recommended, gets updates)
