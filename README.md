@@ -82,5 +82,7 @@ manifest, secrets) and `node --test 'test/*.test.js'` before committing.
    only a tag). It refuses a tag lower than the version in `manifest.json`.
 3. Optional, to keep the repository's own `manifest.json` current (and needed
    to change `minAppVersion`): `node scripts/bump-version.js 0.3.0 [minAppVersion]`
-   and merge it to `main` before tagging.
+   and merge it to `main` before tagging. Don't edit the version in
+   `manifest.json` by hand: CI fails unless `versions.json` has a matching
+   entry, and the script updates both.
 4. BRAT picks up the new release on its next update check.
