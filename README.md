@@ -38,9 +38,9 @@ GitHub token (see the BRAT docs).
 - **Open task note (all tasks)**: same, over every active task.
 - **Insert task inline (filtered / all tasks)**: for quick notes that don't
   deserve their own note. Inserts at the cursor:
-  `- [Task title](todoist link) · due 2026-10-14 09:00 · [[task note]]`
-  (the note link appears only if the task already has a note), then an indented
-  bullet with the cursor ready for you to write. Optionally adds a
+  `[Task title](todoist link) · due 2026-10-14 09:00 · [[task note]]`
+  (the note link appears only if the task already has a note), as plain text
+  with no list marker or extra lines. Optionally adds a
   "💬 Obsidian mention" link to the task, pointing at the note you wrote in;
   each new mention replaces the previous one, and the "📝 Obsidian note" link
   is never touched.

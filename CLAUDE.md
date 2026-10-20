@@ -30,7 +30,7 @@ write. This plugin lets a task reach its note (and a note reach its task) withou
   writes `[📝 Obsidian note](obsidian://…)` into the task description; logs
   `- HH:mm [[note]]` under a heading in today's daily note (once per day).
 - **Insert task inline** (filtered / all): inserts at the cursor
-  `- [title](todoist url) · due … · [[note if any]]` plus an indented child bullet,
+  `[title](todoist url) · due … · [[note if any]]` as plain text (no list marker, no child bullet),
   for quick notes that don't need a dedicated note. Optionally writes
   `[💬 Obsidian mention](obsidian://…)` into the task (replacing the previous mention only).
 - **Create Todoist task from this note** (natural-language due string + due_lang).

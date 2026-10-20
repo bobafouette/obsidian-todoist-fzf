@@ -440,67 +440,67 @@ describe('compareDue', () => {
 describe('inlineLine', () => {
   test('title linking to Todoist, no due, no note', () => {
     assert.equal(inlineLine({ id: '123', content: 'Order laptops' }),
-      '- [Order laptops](https://app.todoist.com/app/task/123)');
+      '[Order laptops](https://app.todoist.com/app/task/123)');
   });
 
   test('with due date and note link', () => {
     assert.equal(
       inlineLine({ id: '9', content: 'Budget', due: { date: '2026-10-20' } }, '[[tasks/budget]]'),
-      '- [Budget](https://app.todoist.com/app/task/9) · due 2026-10-20 · [[tasks/budget]]',
+      '[Budget](https://app.todoist.com/app/task/9) · due 2026-10-20 · [[tasks/budget]]',
     );
   });
 
   test('datetime is shown as "YYYY-MM-DD HH:mm"', () => {
     assert.equal(
       inlineLine({ id: '9', content: 'Call', due: { date: '2026-10-20', datetime: '2026-10-20T14:30:00' } }),
-      '- [Call](https://app.todoist.com/app/task/9) · due 2026-10-20 14:30',
+      '[Call](https://app.todoist.com/app/task/9) · due 2026-10-20 14:30',
     );
   });
 
   test('square brackets in titles are escaped, markdown links reduced to text', () => {
     assert.equal(
       inlineLine({ id: '1', content: 'See [PROJ-1](https://jira/PROJ-1) [urgent]' }),
-      '- [See PROJ-1 \\[urgent\\]](https://app.todoist.com/app/task/1)',
+      '[See PROJ-1 \\[urgent\\]](https://app.todoist.com/app/task/1)',
     );
   });
 
   test('whitespace/newlines in the title are collapsed', () => {
-    assert.equal(inlineLine({ id: '1', content: '  a\n\tb   c ' }), '- [a b c](https://app.todoist.com/app/task/1)');
+    assert.equal(inlineLine({ id: '1', content: '  a\n\tb   c ' }), '[a b c](https://app.todoist.com/app/task/1)');
   });
 
   test('missing title falls back to "Untitled task"', () => {
-    assert.equal(inlineLine({ id: '1' }), '- [Untitled task](https://app.todoist.com/app/task/1)');
+    assert.equal(inlineLine({ id: '1' }), '[Untitled task](https://app.todoist.com/app/task/1)');
   });
 
   test('empty note link is omitted', () => {
-    assert.equal(inlineLine({ id: '1', content: 'x' }, ''), '- [x](https://app.todoist.com/app/task/1)');
+    assert.equal(inlineLine({ id: '1', content: 'x' }, ''), '[x](https://app.todoist.com/app/task/1)');
   });
 
   test('UTC datetime ("Z") of a fixed-timezone task is shown in local time', () => {
     assert.equal(
       inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00Z' } }),
-      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20 09:00',
+      '[x](https://app.todoist.com/app/task/1) · due 2026-10-20 09:00',
     );
   });
 
   test('UTC datetime converted across midnight changes the local date', () => {
     assert.equal(
       inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T23:30:00Z' } }),
-      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-21 01:30',
+      '[x](https://app.todoist.com/app/task/1) · due 2026-10-21 01:30',
     );
   });
 
   test('floating datetime (no "Z") is kept as-is', () => {
     assert.equal(
       inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20', datetime: '2026-10-20T07:00:00' } }),
-      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20 07:00',
+      '[x](https://app.todoist.com/app/task/1) · due 2026-10-20 07:00',
     );
   });
 
   test('date-only due is kept as-is', () => {
     assert.equal(
       inlineLine({ id: '1', content: 'x', due: { date: '2026-10-20' } }),
-      '- [x](https://app.todoist.com/app/task/1) · due 2026-10-20',
+      '[x](https://app.todoist.com/app/task/1) · due 2026-10-20',
     );
   });
 });

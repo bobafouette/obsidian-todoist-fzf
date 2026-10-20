@@ -136,14 +136,14 @@ function formatDue(due) {
   return due ? due.replace('T', ' ').slice(0, 16) : '';
 }
 
-// One list item: task title linking to Todoist, due date, and the task's note if it has one.
+// Plain inline text: task title linking to Todoist, due date, and the task's note if it has one.
 function inlineLine(task, noteLink) {
   const title = String(task.content || 'Untitled task')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/([[\]])/g, '\\$1')
     .replace(/\s+/g, ' ')
     .trim();
-  let line = `- [${title}](${taskUrl(task.id)})`;
+  let line = `[${title}](${taskUrl(task.id)})`;
   const due = dueOf(task);
   if (due) line += ` · due ${formatDue(due)}`;
   if (noteLink) line += ` · ${noteLink}`;
@@ -362,22 +362,7 @@ class TaskNoteBridge extends Plugin {
   async insertInline(editor, file, task, notes) {
     const note = notes.get(String(task.id));
     const noteLink = note && file ? this.app.fileManager.generateMarkdownLink(note, file.path) : '';
-    const unit = this.app.vault.getConfig?.('useTab') === false
-      ? ' '.repeat(this.app.vault.getConfig('tabSize') || 4)
-      : '\t';
-    const cur = editor.getCursor();
-    const current = editor.getLine(cur.line);
-    const indent = (current.match(/^\s*/) || [''])[0];
-    const block = `${indent}${inlineLine(task, noteLink)}\n${indent}${unit}- `;
-    let childLine;
-    if (current.trim() === '') {
-      editor.replaceRange(block, { line: cur.line, ch: 0 }, { line: cur.line, ch: current.length });
-      childLine = cur.line + 1;
-    } else {
-      editor.replaceRange(`\n${block}`, { line: cur.line, ch: current.length });
-      childLine = cur.line + 2;
-    }
-    editor.setCursor({ line: childLine, ch: editor.getLine(childLine).length });
+    editor.replaceSelection(inlineLine(task, noteLink));
     editor.focus();
 
     if (this.settings.writeBackMention && file) {
