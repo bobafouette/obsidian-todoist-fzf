@@ -1,7 +1,25 @@
 #!/usr/bin/env node
-// Repository checks for Todoist fzf. Dependency-free, CommonJS, Node 22.
+// Repository checks for Todoist fzf (an fzf-family plugin). Dependency-free, CommonJS, Node 22.
 // Usage: node scripts/check.js   (exits 1 if any check fails)
 'use strict';
+
+// ---------------------------------------------------------------- per-plugin settings
+
+// Name of the service, used in messages.
+const SERVICE = 'Todoist';
+// true: main.js may only send GET requests. Set it to false only for a documented
+// write exception (GUIDELINES.md, "Read-only by default"), listed in CLAUDE.md and README.md.
+const READ_ONLY = false;
+// Patterns that look like this service's API tokens. Opt a line out with the
+// marker "check:allow-token" when the match is not a secret.
+// Examples: Todoist /\b[0-9a-f]{40}\b/, Jira Cloud /\bATATT[A-Za-z0-9_\-=]{20,}/.
+const TOKEN_PATTERNS = [
+  /\b[0-9a-f]{40}\b/,
+];
+// Personal details that must never be committed (the GitHub handle is fine).
+const PERSONAL_PATTERNS = [
+  /[A-Za-z0-9._%+-]+@(?:gmail|googlemail|yahoo|hotmail|outlook|live|icloud|proton|protonmail)\.[a-z.]+/i,
+];
 
 const fs = require('fs');
 const path = require('path');
@@ -121,15 +139,41 @@ function checkManifest() {
   return errors;
 }
 
-/** d. No Todoist token committed. */
+/** d. main.js never writes to the service: every request must be a GET. */
+function checkReadOnly() {
+  const errors = [];
+  if (!READ_ONLY) return errors;
+  const re = /\bmethod\s*:\s*['"`](POST|PUT|PATCH|DELETE)\b/i;
+  const lines = fs.readFileSync(MAIN, 'utf8').split(/\r?\n/);
+  let inBlock = false;
+  lines.forEach((raw, i) => {
+    let line = raw;
+    if (inBlock) {
+      const end = line.indexOf('*/');
+      if (end === -1) return;
+      inBlock = false;
+      line = line.slice(end + 2);
+    }
+    const t = line.trim();
+    if (t.startsWith('//')) return;
+    if (t.startsWith('/*')) {
+      const end = t.indexOf('*/', 2);
+      if (end === -1) { inBlock = true; return; }
+      line = t.slice(end + 2);
+    }
+    if (re.test(line)) errors.push(`main.js:${i + 1}: non-GET request (the plugin is read-only): ${raw.trim()}`);
+  });
+  return errors;
+}
+
+/** e. No API token or personal detail committed. */
 function checkSecrets() {
   const errors = [];
   if (gitFiles(['ls-files', '--', 'data.json']).length) {
-    errors.push('data.json is tracked by git (it holds the Todoist token): git rm --cached data.json');
+    errors.push('data.json is tracked by git (it holds the API token): git rm --cached data.json');
   }
   // Tracked files plus untracked-but-not-ignored ones (about to be committed).
   const files = gitFiles(['ls-files', '--cached', '--others', '--exclude-standard']);
-  const tokenRe = /\b[0-9a-f]{40}\b/;
   for (const rel of files) {
     let buf;
     try {
@@ -139,8 +183,12 @@ function checkSecrets() {
     }
     if (buf.includes(0)) continue; // binary
     buf.toString('utf8').split(/\r?\n/).forEach((line, i) => {
-      if (tokenRe.test(line) && !line.includes('check:allow-hex')) {
-        errors.push(`${rel}:${i + 1}: looks like a Todoist API token (40 hex chars); add "check:allow-hex" on the line if it is not a secret`);
+      if (line.includes('check:allow-token')) return;
+      if (TOKEN_PATTERNS.some((re) => re.test(line))) {
+        errors.push(`${rel}:${i + 1}: looks like an API token for ${SERVICE}; add "check:allow-token" on the line if it is not a secret`);
+      }
+      if (PERSONAL_PATTERNS.some((re) => re.test(line))) {
+        errors.push(`${rel}:${i + 1}: looks like a personal email address; only the handle bobafouette belongs in the repo (or add "check:allow-token")`);
       }
     });
   }
@@ -152,6 +200,7 @@ function checkSecrets() {
 const CHECKS = [
   ['Syntax (node --check main.js)', checkSyntax],
   ['Mobile safety (main.js)', checkMobileSafety],
+  [READ_ONLY ? 'Read-only (main.js)' : 'Read-only (main.js): disabled by READ_ONLY', checkReadOnly],
   ['Manifest / versions.json', checkManifest],
   ['Secrets', checkSecrets],
 ];
