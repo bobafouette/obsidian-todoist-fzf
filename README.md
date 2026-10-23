@@ -131,8 +131,7 @@ node --test 'test/*.test.js'
 
 `scripts/check.js` checks that `main.js` parses, that it is mobile-safe (no `require`
 other than `obsidian`, no `fetch`/`XMLHttpRequest`, no Node or Electron APIs), that
-`manifest.json` and `versions.json` agree, and that no Todoist token or personal email
-address is committed. Its read-only check is switched off (`READ_ONLY = false`), because
+`manifest.json` and `versions.json` agree, and that no Todoist token is committed. Its read-only check is switched off (`READ_ONLY = false`), because
 the plugin writes the 📝/💬 links into tasks and can create tasks.
 
 ## Releasing

@@ -95,7 +95,7 @@ to the console and shows an 8 s notice prefixed with the plugin name.
   daily log, templates and settings; `client.test.js` covers `TodoistClient`;
   `helpers.test.js` the pure helpers (`TaskNoteBridge._test`).
 - `node scripts/check.js`: syntax, mobile safety, manifest/versions.json consistency, secrets
-  (Todoist tokens, personal emails). The read-only check is off (`READ_ONLY = false`): the
+  (Todoist tokens). The read-only check is off (`READ_ONLY = false`): the
   plugin deliberately writes the 📝/💬 links and creates tasks.
 - CI (`.github/workflows/ci.yml`) runs both. Publishing a release (web page) or pushing a
   tag `X.Y.Z` (no `v`) runs `release.yml`, which writes the tag version into
