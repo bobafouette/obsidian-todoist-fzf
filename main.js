@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Task Note Bridge — Todoist stays the alarm clock, Obsidian holds the thinking.
+ * Todoist fzf: Todoist stays the alarm clock, Obsidian holds the thinking.
  * Plain JS (no build step). Works on desktop and mobile (uses requestUrl, no Node APIs).
  */
 const {
@@ -8,11 +8,15 @@ const {
   TFile, normalizePath, requestUrl, moment,
 } = require('obsidian');
 
+const PLUGIN_NAME = 'Todoist fzf';
 const API = 'https://api.todoist.com/api/v1';
 const LINK_LABEL = '📝 Obsidian note';
 const LINK_RE = /\[📝 Obsidian note\]\(obsidian:\/\/[^)\s]*\)/;
 const MENTION_LABEL = '💬 Obsidian mention';
 const MENTION_RE = /\[💬 Obsidian mention\]\(obsidian:\/\/[^)\s]*\)/;
+const NAME_MAX = 100;
+const PAGE_LIMIT = 200;
+const FETCH_CAP = 500;
 
 const DEFAULTS = {
   token: '',
@@ -29,12 +33,34 @@ const DEFAULTS = {
   writeBackMention: true,
 };
 
+const MSG_TOKEN = 'Set your Todoist API token in the plugin settings first.';
+const MSG_LOADING = 'Loading Todoist tasks…';
+const MSG_NO_TASKS = 'No tasks match.';
+const MSG_NO_NOTES = 'No task notes found.';
+const MSG_NO_DAILY = "Today's daily note doesn't exist yet, so this wasn't logged.";
+const MSG_ALREADY_LINKED = 'This note is already linked to a Todoist task.';
+const MSG_CONNECTED = 'Connected to Todoist ✔';
+const MSG_AUTH = 'Todoist rejected the API token (check it in the settings)';
+const MSG_OFFLINE = "Can't reach Todoist (check your connection)";
+const MSG_BAD_RESPONSE = 'Unexpected response from Todoist';
+
 // ---------- pure helpers ----------
 
 const FORBIDDEN_RE = /[\\/:*?"<>|#^[\]]/g;
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Cuts to at most `max` UTF-16 units without splitting a character (emoji stay whole).
+function truncate(s, max) {
+  if (s.length <= max) return s;
+  let cut = '';
+  for (const ch of s) {
+    if (cut.length + ch.length > max) break;
+    cut += ch;
+  }
+  return cut;
 }
 
 // Builds a note file name from a task title. `sep` replaces spaces and
@@ -47,9 +73,8 @@ function sanitizeTitle(s, sep = ' ') {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // markdown links -> text
     .replace(FORBIDDEN_RE, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 100)
     .trim();
+  t = truncate(t, NAME_MAX).trim();
   const e = escapeRegExp(sep);
   if (sep !== ' ') t = t.replace(new RegExp(`(?:\\s|${e})+`, 'g'), sep);
   // No leading/trailing dots or separators: Obsidian hides dot-files (#2).
@@ -132,6 +157,31 @@ function insertUnderHeading(data, heading, line) {
   return lines.join('\n');
 }
 
+// True if `needle` appears in the section under `heading` (up to the next heading
+// of the same or a higher level). An empty heading means the whole note.
+function sectionContains(data, heading, needle) {
+  const text = String(data);
+  const want = (heading || '').trim();
+  if (!want) return text.includes(needle);
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => l.trim() === want);
+  if (start === -1) return false;
+  const level = (want.match(/^#+/) || [''])[0].length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(#+)\s/);
+    if (m && m[1].length <= level) break;
+    if (lines[i].includes(needle)) return true;
+  }
+  return false;
+}
+
+// Path of the daily note for moment `m`, from the core Daily notes options.
+function dailyNotePath(options, m) {
+  const o = options || {};
+  const folder = String(o.folder || '').trim();
+  return normalizePath(`${folder ? `${folder}/` : ''}${m.format(o.format || 'YYYY-MM-DD')}.md`);
+}
+
 function formatDue(due) {
   return due ? due.replace('T', ' ').slice(0, 16) : '';
 }
@@ -170,10 +220,173 @@ function renderTemplate(tpl, task) {
   return tpl.replace(/\{\{(\w+)\}\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vals, k) ? vals[k] : m));
 }
 
+function stripFrontmatter(s) {
+  return String(s).replace(/^---\r?\n(?:[\s\S]*?\r?\n)??---[ \t]*(?:\r?\n|$)/, '');
+}
+
 function defaultBody(task) {
   const desc = stripLink(task.description);
   const quoted = desc ? desc.split('\n').map((l) => `> ${l}`).join('\n') + '\n\n' : '';
   return `# ${task.content}\n\n${quoted}## Context\n\n\n## Notes\n\n`;
+}
+
+// Every property the plugin keeps in a task note. A null value means "remove the key".
+function noteProps(task, status = 'open') {
+  return {
+    todoist_id: String(task.id),
+    todoist_url: taskUrl(task.id),
+    todoist_title: task.content || null,
+    due: dueOf(task) || null,
+    todoist_status: status,
+  };
+}
+
+// The subset of `props` whose value differs from the frontmatter (null, undefined
+// and '' are all "absent").
+function propsDiff(fm, props) {
+  const norm = (v) => (v == null ? '' : String(v));
+  const out = {};
+  for (const k of Object.keys(props)) {
+    if (norm(fm && fm[k]) !== norm(props[k])) out[k] = props[k];
+  }
+  return out;
+}
+
+function applyProps(fm, props) {
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === '') delete fm[k]; else fm[k] = v;
+  }
+}
+
+function idOf(fm) {
+  const v = fm && fm.todoist_id;
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return null;
+}
+
+// todoist_id -> every note that carries it, sorted by path (duplicates are kept).
+function indexNotes(files, fmOf) {
+  const map = new Map();
+  for (const f of files) {
+    const id = idOf(fmOf(f));
+    if (!id) continue;
+    if (!map.has(id)) map.set(id, []);
+    map.get(id).push(f);
+  }
+  for (const list of map.values()) list.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return map;
+}
+
+// ---------- Todoist client ----------
+
+class TodoistError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = 'TodoistError';
+    this.status = status;
+  }
+}
+
+// Follows next_cursor until the last page, keeping at most `cap` results.
+async function paginate(fetchPage, cap = FETCH_CAP) {
+  const out = [];
+  let cursor;
+  for (;;) {
+    const page = await fetchPage(cursor);
+    out.push(...((page && page.results) || []));
+    if (out.length >= cap) return out.slice(0, cap);
+    if (!page || !page.next_cursor) return out;
+    cursor = page.next_cursor;
+  }
+}
+
+function readJson(res) {
+  try {
+    return res.json;
+  } catch (e) {
+    return undefined;
+  }
+}
+
+function readText(res) {
+  try {
+    return typeof res.text === 'string' ? res.text : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+class TodoistClient {
+  constructor({ token }, request = requestUrl) {
+    this.token = token;
+    this.request = request;
+  }
+
+  async call(method, path, params, body) {
+    let url = API + path;
+    if (params) {
+      const q = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
+      if (q) url += `?${q}`;
+    }
+    const headers = { Authorization: `Bearer ${this.token}` };
+    if (body) headers['Content-Type'] = 'application/json';
+    let res;
+    try {
+      res = await this.request({
+        url, method, headers,
+        body: body ? JSON.stringify(body) : undefined,
+        throw: false,
+      });
+    } catch (e) {
+      throw new TodoistError(MSG_OFFLINE, 0);
+    }
+    const status = res && res.status;
+    if (status >= 200 && status < 300) {
+      if (status === 204 || !readText(res)) return null;
+      const data = readJson(res);
+      if (data === undefined) throw new TodoistError(MSG_BAD_RESPONSE, status);
+      return data;
+    }
+    if (status === 401 || status === 403) throw new TodoistError(MSG_AUTH, status);
+    const json = readJson(res);
+    const detail = json && typeof json.error === 'string' && json.error.trim()
+      ? json.error.trim()
+      : readText(res).trim().slice(0, 200);
+    throw new TodoistError(`Todoist API ${status}${detail ? `: ${detail}` : ''}`, status);
+  }
+
+  get(path, params) { return this.call('GET', path, params); }
+  post(path, body) { return this.call('POST', path, undefined, body); }
+
+  list(path, params, cap = FETCH_CAP) {
+    return paginate((cursor) => this.get(path, Object.assign({}, params, { limit: PAGE_LIMIT, cursor })), cap);
+  }
+
+  tasks() { return this.list('/tasks'); }
+  filter(query) { return this.list('/tasks/filter', { query }); }
+
+  // The task, or null when Todoist answers 404 (deleted or unknown).
+  async task(id) {
+    try {
+      return await this.get(`/tasks/${encodeURIComponent(id)}`);
+    } catch (e) {
+      if (e instanceof TodoistError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  updateTask(id, fields) { return this.post(`/tasks/${encodeURIComponent(id)}`, fields); }
+  createTask(fields) { return this.post('/tasks', fields); }
+  ping() { return this.get('/tasks/filter', { query: 'today', limit: 1 }); }
+}
+
+// Properties for a note whose task is not among the active tasks, from GET /tasks/{id}.
+// 404 or is_deleted: missing (only the status changes). Completed: closed.
+function propsForLookup(task) {
+  if (!task || task.is_deleted) return { todoist_status: 'missing' };
+  return noteProps(task, task.checked ? 'closed' : 'open');
 }
 
 // ---------- modals ----------
@@ -194,7 +407,7 @@ class TaskPicker extends FuzzySuggestModal {
     const due = dueOf(t);
     if (due) el.createEl('small', { text: `Due ${formatDue(due)}`, cls: 'tnb-due' });
   }
-  onChooseItem(t) { this.onChoose(t); }
+  onChooseItem(t) { return this.onChoose(t); }
 }
 
 class NewTaskModal extends Modal {
@@ -233,7 +446,7 @@ class TaskNoteBridge extends Plugin {
     await this.loadSettings();
     this.addSettingTab(new BridgeSettingTab(this.app, this));
 
-    const openNote = (t, notes) => this.openTaskNote(t, notes.get(String(t.id)));
+    const openNote = (t, notes) => this.openTaskNote(t, (notes.get(String(t.id)) || [])[0]);
     this.addCommand({ id: 'open-task-note', name: 'Open task note (filtered tasks)', callback: () => this.pickTask(false, openNote) });
     this.addCommand({ id: 'open-task-note-all', name: 'Open task note (all tasks)', callback: () => this.pickTask(true, openNote) });
     this.addCommand({
@@ -271,61 +484,39 @@ class TaskNoteBridge extends Plugin {
     this.addRibbonIcon('square-check', 'Open task note', () => this.pickTask(false, openNote));
     this.registerEvent(this.app.vault.on('rename', (file) => this.onRename(file)));
     this.app.workspace.onLayoutReady(() => {
-      if (this.settings.refreshOnStartup && this.settings.token) this.refreshAll(false);
+      if (!this.settings.refreshOnStartup || !this.settings.token) return;
+      // Startup refresh is silent on failure.
+      this.refreshAll(false).catch((e) => console.warn(`[${PLUGIN_NAME}] refresh failed`, e));
     });
   }
 
   async loadSettings() { this.settings = Object.assign({}, DEFAULTS, await this.loadData()); }
   async saveSettings() { await this.saveData(this.settings); }
 
-  // ----- Todoist API -----
-
-  async api(method, path, body) {
-    if (!this.settings.token) throw new Error('Set your Todoist API token in the plugin settings first.');
-    const headers = { Authorization: `Bearer ${this.settings.token}` };
-    if (body) headers['Content-Type'] = 'application/json';
-    const res = await requestUrl({
-      url: API + path, method, headers,
-      body: body ? JSON.stringify(body) : undefined,
-      throw: false,
-    });
-    if (res.status >= 400) {
-      const err = new Error(`Todoist API ${res.status}: ${(res.text || '').slice(0, 200)}`);
-      err.status = res.status;
-      throw err;
+  // A client for the current token, or null (with a notice unless quiet) if none is set.
+  client(quiet = false) {
+    const token = String(this.settings.token || '').trim();
+    if (!token) {
+      if (!quiet) new Notice(MSG_TOKEN);
+      return null;
     }
-    if (res.status === 204 || !res.text) return null;
-    return res.json;
-  }
-
-  async paginate(path, params) {
-    const out = [];
-    let cursor = null;
-    do {
-      const q = Object.entries(Object.assign({}, params, { limit: '200' }, cursor ? { cursor } : {}))
-        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
-      const res = await this.api('GET', `${path}?${q}`);
-      out.push(...((res && res.results) || []));
-      cursor = res && res.next_cursor;
-    } while (cursor);
-    return out;
+    return new TodoistClient({ token });
   }
 
   // ----- vault helpers -----
 
-  taskIdOf(file) {
-    if (!(file instanceof TFile)) return null;
-    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-    return fm && fm.todoist_id != null ? String(fm.todoist_id) : null;
+  frontmatter(file) {
+    const cache = this.app.metadataCache.getFileCache(file);
+    return cache && cache.frontmatter;
   }
 
-  noteIndex() {
-    const map = new Map();
-    for (const f of this.app.vault.getMarkdownFiles()) {
-      const id = this.taskIdOf(f);
-      if (id && !map.has(id)) map.set(id, f);
-    }
-    return map;
+  taskIdOf(file) {
+    if (!(file instanceof TFile)) return null;
+    return idOf(this.frontmatter(file));
+  }
+
+  notesIndex() {
+    return indexNotes(this.app.vault.getMarkdownFiles(), (f) => this.frontmatter(f));
   }
 
   noteUri(file) {
@@ -333,159 +524,194 @@ class TaskNoteBridge extends Plugin {
   }
 
   fail(e) {
-    console.error('[Task Note Bridge]', e);
-    new Notice(`Task Note Bridge: ${e.message}`, 8000);
+    console.error(`[${PLUGIN_NAME}]`, e);
+    new Notice(`${PLUGIN_NAME}: ${(e && e.message) || e}`, 8000);
+  }
+
+  // Writes only the properties whose value changed, so refreshes don't churn sync.
+  async syncProps(file, props) {
+    const diff = propsDiff(this.frontmatter(file), props);
+    if (!Object.keys(diff).length) return false;
+    await this.app.fileManager.processFrontMatter(file, (fm) => applyProps(fm, diff));
+    return true;
   }
 
   // ----- main flow -----
 
   async pickTask(all, onChoose) {
-    if (!this.settings.token) { new Notice('Set your Todoist API token in the plugin settings first.'); return; }
-    const loading = new Notice('Loading Todoist tasks…', 0);
+    const client = this.client();
+    if (!client) return;
+    const loading = new Notice(MSG_LOADING, 0);
     let tasks;
     try {
-      tasks = all
-        ? await this.paginate('/tasks', {})
-        : await this.paginate('/tasks/filter', { query: this.settings.filter || 'today' });
+      tasks = all ? await client.tasks() : await client.filter(this.settings.filter || 'today');
     } catch (e) {
       loading.hide();
       this.fail(e);
       return;
     }
     loading.hide();
-    if (!tasks.length) { new Notice('No tasks match.'); return; }
+    if (!tasks.length) { new Notice(MSG_NO_TASKS); return; }
     tasks.sort(compareDue);
-    const notes = this.noteIndex();
+    const notes = this.notesIndex();
     new TaskPicker(this.app, tasks, notes, (t) => onChoose(t, notes)).open();
   }
 
   async insertInline(editor, file, task, notes) {
-    const note = notes.get(String(task.id));
+    const note = (notes.get(String(task.id)) || [])[0];
     const noteLink = note && file ? this.app.fileManager.generateMarkdownLink(note, file.path) : '';
     editor.replaceSelection(inlineLine(task, noteLink));
-    editor.focus();
+    if (typeof editor.focus === 'function') editor.focus();
 
     if (this.settings.writeBackMention && file) {
       try {
         const next = withLink(task.description, `[${MENTION_LABEL}](${this.noteUri(file)})`, MENTION_RE);
-        if (next !== (task.description || '')) await this.api('POST', `/tasks/${task.id}`, { description: next });
+        const client = this.client();
+        if (client && next !== (task.description || '')) await client.updateTask(task.id, { description: next });
       } catch (e) {
         this.fail(e);
       }
     }
   }
 
+  // Opens the task's note, creating it (and logging it in today's daily note) if needed.
+  // The back-link and the log are independent: one failing doesn't skip the other.
   async openTaskNote(task, existing) {
-    try {
-      let file = existing;
-      if (!file) file = await this.createNote(task);
-      else await this.syncFrontmatter(file, task);
-      await this.app.workspace.getLeaf(false).openFile(file);
-      if (this.settings.writeBackLink) await this.writeBackLink(task, file, false);
-      if (this.settings.logToDaily) await this.logToDaily(file);
-    } catch (e) {
-      this.fail(e);
+    let file = existing;
+    if (file) {
+      try { await this.syncProps(file, noteProps(task)); } catch (e) { this.fail(e); }
+    } else {
+      try { file = await this.createNote(task); } catch (e) { this.fail(e); return; }
+      try { await this.logToDaily(file); } catch (e) { this.fail(e); }
+    }
+    try { await this.app.workspace.getLeaf(false).openFile(file); } catch (e) { this.fail(e); }
+    if (this.settings.writeBackLink) {
+      try { await this.writeBackLink(task, file, false); } catch (e) { this.fail(e); }
     }
   }
 
   async createNote(task) {
+    const { vault, fileManager } = this.app;
     const raw = normalizePath(this.settings.folder || '/');
     const prefix = raw && raw !== '/' ? `${raw}/` : '';
-    if (prefix && !this.app.vault.getAbstractFileByPath(raw)) await this.app.vault.createFolder(raw);
+    if (prefix && !vault.getAbstractFileByPath(raw)) await vault.createFolder(raw);
 
     const sep = this.settings.fileNameSeparator;
     const base = sanitizeTitle(task.content, sep);
     let path = normalizePath(`${prefix}${base}.md`);
-    for (let i = 2; this.app.vault.getAbstractFileByPath(path); i++) {
+    for (let i = 2; vault.getAbstractFileByPath(path); i++) {
       path = normalizePath(`${prefix}${sanitizeTitle(`${base} ${i}`, sep)}.md`);
     }
 
     let body = defaultBody(task);
-    if (this.settings.template) {
-      const tplPath = normalizePath(this.settings.template.endsWith('.md') ? this.settings.template : `${this.settings.template}.md`);
-      const tpl = this.app.vault.getAbstractFileByPath(tplPath);
-      if (tpl instanceof TFile) body = renderTemplate(await this.app.vault.read(tpl), task);
+    const tplName = String(this.settings.template || '').trim();
+    if (tplName) {
+      const tplPath = normalizePath(/\.md$/i.test(tplName) ? tplName : `${tplName}.md`);
+      const tpl = vault.getAbstractFileByPath(tplPath);
+      if (tpl instanceof TFile) body = renderTemplate(await vault.read(tpl), task);
       else new Notice(`Template not found: ${tplPath} — using the default layout.`);
     }
 
-    const file = await this.app.vault.create(path, body);
-    await this.app.fileManager.processFrontMatter(file, (fm) => {
-      fm.todoist_id = String(task.id);
-      fm.todoist_url = taskUrl(task.id);
-      const due = dueOf(task);
-      if (due) fm.due = due; else delete fm.due;
-      fm.todoist_status = 'open';
+    // The template's own frontmatter is kept; the plugin's keys are merged into it.
+    const file = await vault.create(path, body);
+    const setProps = () => fileManager.processFrontMatter(file, (fm) => {
+      applyProps(fm, noteProps(task));
       if (!fm.created) fm.created = moment().format('YYYY-MM-DD');
     });
+    try {
+      await setProps();
+    } catch (e) {
+      // Rendered template frontmatter that isn't valid YAML: drop it and retry.
+      const stripped = stripFrontmatter(body);
+      if (stripped === body) throw e;
+      new Notice(`${PLUGIN_NAME}: the template's properties aren't valid YAML once filled in, so they were dropped.`, 8000);
+      await vault.modify(file, stripped);
+      await setProps();
+    }
     return file;
-  }
-
-  // Only writes when something changed, so startup refreshes don't churn your sync/git.
-  async syncFrontmatter(file, task) {
-    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
-    const status = task ? 'open' : 'closed';
-    const due = task ? dueOf(task) : (fm.due ?? null);
-    const curDue = fm.due ?? null;
-    if (fm.todoist_status === status && String(curDue) === String(due)) return false;
-    await this.app.fileManager.processFrontMatter(file, (f) => {
-      f.todoist_status = status;
-      if (due) f.due = due; else delete f.due;
-    });
-    return true;
   }
 
   async writeBackLink(task, file, onlyIfPresent) {
     const desc = task.description || '';
     if (onlyIfPresent && !LINK_RE.test(desc)) return;
     const next = withLink(desc, `[${LINK_LABEL}](${this.noteUri(file)})`);
-    if (next !== desc) await this.api('POST', `/tasks/${task.id}`, { description: next });
+    if (next === desc) return;
+    const client = this.client();
+    if (client) await client.updateTask(task.id, { description: next });
   }
 
   async onRename(file) {
-    if (!this.settings.updateLinkOnRename || !this.settings.token) return;
+    if (!this.settings.updateLinkOnRename) return;
     if (!(file instanceof TFile) || file.extension !== 'md') return;
     const id = this.taskIdOf(file);
-    if (!id) return;
+    const client = id && this.client(true);
+    if (!client) return;
     try {
-      const task = await this.api('GET', `/tasks/${id}`);
-      if (task && !task.checked) await this.writeBackLink(task, file, true);
+      const task = await client.task(id);
+      if (task && !task.checked && !task.is_deleted) await this.writeBackLink(task, file, true);
     } catch (e) {
-      if (e.status !== 404) console.warn('[Task Note Bridge] rename sync failed', e);
+      console.warn(`[${PLUGIN_NAME}] rename sync failed`, e);
     }
   }
 
+  // Updates every task note (duplicates included). Active tasks come from one listing;
+  // a note whose task isn't active and that isn't already closed/missing is looked up
+  // on its own: completed -> closed, 404 or deleted -> missing.
   async refreshAll(verbose) {
-    const notes = this.noteIndex();
-    if (!notes.size) { if (verbose) new Notice('No task notes found.'); return; }
+    const client = this.client(!verbose);
+    if (!client) return;
+    const index = this.notesIndex();
+    if (!index.size) { if (verbose) new Notice(MSG_NO_NOTES); return; }
     let tasks;
     try {
-      tasks = await this.paginate('/tasks', {});
+      tasks = await client.tasks();
     } catch (e) {
-      if (verbose) this.fail(e); else console.warn('[Task Note Bridge] refresh failed', e);
+      if (verbose) this.fail(e); else console.warn(`[${PLUGIN_NAME}] refresh failed`, e);
       return;
     }
-    const byId = new Map(tasks.map((t) => [String(t.id), t]));
+    const active = new Map(tasks.map((t) => [String(t.id), t]));
     let changed = 0;
-    for (const [id, file] of notes) {
-      if (await this.syncFrontmatter(file, byId.get(id) || null)) changed++;
+    let failed = 0;
+    for (const [id, files] of index) {
+      let props;
+      if (active.has(id)) {
+        props = noteProps(active.get(id));
+      } else {
+        const settled = files.every((f) => {
+          const s = (this.frontmatter(f) || {}).todoist_status;
+          return s === 'closed' || s === 'missing';
+        });
+        if (settled) continue;
+        try {
+          props = propsForLookup(await client.task(id));
+        } catch (e) {
+          failed += files.length;
+          console.warn(`[${PLUGIN_NAME}] refresh of task ${id} failed`, e);
+          continue;
+        }
+      }
+      for (const file of files) {
+        try {
+          if (await this.syncProps(file, props)) changed++;
+        } catch (e) {
+          failed++;
+          console.warn(`[${PLUGIN_NAME}] refresh of ${file.path} failed`, e);
+        }
+      }
     }
-    if (verbose) new Notice(`Task notes refreshed (${changed} updated).`);
+    if (verbose) new Notice(`Task notes refreshed (${changed} updated${failed ? `, ${failed} failed` : ''}).`);
   }
 
   async createTaskFromNote(file) {
-    if (this.taskIdOf(file)) { new Notice('This note is already linked to a Todoist task.'); return; }
+    if (this.taskIdOf(file)) { new Notice(MSG_ALREADY_LINKED); return; }
+    const client = this.client();
+    if (!client) return;
     new NewTaskModal(this.app, file.basename, async (content, dueString) => {
       try {
         const body = { content, description: `[${LINK_LABEL}](${this.noteUri(file)})` };
         if (dueString) { body.due_string = dueString; body.due_lang = this.settings.dueLang || 'en'; }
-        const task = await this.api('POST', '/tasks', body);
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
-          fm.todoist_id = String(task.id);
-          fm.todoist_url = taskUrl(task.id);
-          const due = dueOf(task);
-          if (due) fm.due = due;
-          fm.todoist_status = 'open';
-        });
+        const task = await client.createTask(body);
+        await this.app.fileManager.processFrontMatter(file, (fm) => applyProps(fm, noteProps(task)));
         const due = dueOf(task);
         new Notice(due ? `Task created, due ${due}.` : 'Task created (no due date).');
       } catch (e) {
@@ -494,20 +720,24 @@ class TaskNoteBridge extends Plugin {
     }).open();
   }
 
+  dailyNoteFile() {
+    const ip = this.app.internalPlugins;
+    const dn = ip && ip.getPluginById && ip.getPluginById('daily-notes');
+    const options = dn && dn.instance && dn.instance.options;
+    const file = this.app.vault.getAbstractFileByPath(dailyNotePath(options, moment()));
+    return file instanceof TFile ? file : null;
+  }
+
   async logToDaily(file) {
-    const dn = this.app.internalPlugins?.getPluginById?.('daily-notes');
-    const opts = dn?.instance?.options || {};
-    const folder = (opts.folder || '').trim();
-    const path = normalizePath(`${folder ? `${folder}/` : ''}${moment().format(opts.format || 'YYYY-MM-DD')}.md`);
-    const daily = this.app.vault.getAbstractFileByPath(path);
-    if (!(daily instanceof TFile)) {
-      new Notice("Today's daily note doesn't exist yet, so this wasn't logged.");
-      return;
-    }
+    if (!this.settings.logToDaily) return;
+    const daily = this.dailyNoteFile();
+    if (!daily) { new Notice(MSG_NO_DAILY); return; }
     if (daily.path === file.path) return;
+    const heading = this.settings.dailyHeading;
     const link = this.app.fileManager.generateMarkdownLink(file, daily.path);
+    const line = `- ${moment().format('HH:mm')} ${link}`;
     await this.app.vault.process(daily, (data) =>
-      data.includes(link) ? data : insertUnderHeading(data, this.settings.dailyHeading, `- ${moment().format('HH:mm')} ${link}`));
+      (sectionContains(data, heading, link) ? data : insertUnderHeading(data, heading, line)));
   }
 }
 
@@ -518,62 +748,60 @@ class BridgeSettingTab extends PluginSettingTab {
 
   display() {
     const { containerEl } = this;
-    const s = this.plugin.settings;
-    const save = () => this.plugin.saveSettings();
+    const plugin = this.plugin;
+    const s = plugin.settings;
+    const save = () => plugin.saveSettings();
     containerEl.empty();
+
+    const text = (name, desc, key, placeholder, transform = (v) => v) =>
+      new Setting(containerEl).setName(name).setDesc(desc).addText((t) => t
+        .setPlaceholder(placeholder)
+        .setValue(s[key])
+        .onChange(async (v) => { s[key] = transform(v); await save(); }));
+    const toggle = (name, desc, key) =>
+      new Setting(containerEl).setName(name).setDesc(desc).addToggle((t) => t
+        .setValue(s[key])
+        .onChange(async (v) => { s[key] = v; await save(); }));
+    const trim = (v) => v.trim();
 
     new Setting(containerEl)
       .setName('Todoist API token')
-      .setDesc('Todoist → Settings → Integrations → Developer. Stored in this plugin\'s data.json.')
-      .addText((t) => { t.inputEl.type = 'password'; t.setValue(s.token).onChange(async (v) => { s.token = v.trim(); await save(); }); })
+      .setDesc('Todoist → Settings → Integrations → Developer. Stored in plain text in this plugin\'s data.json.')
+      .addText((t) => {
+        t.inputEl.type = 'password';
+        t.setValue(s.token).onChange(async (v) => { s.token = v.trim(); await save(); });
+      })
       .addButton((b) => b.setButtonText('Test').onClick(async () => {
-        try { await this.plugin.api('GET', '/tasks/filter?query=today&limit=1'); new Notice('Connected to Todoist ✔'); }
-        catch (e) { this.plugin.fail(e); }
+        const client = plugin.client();
+        if (!client) return;
+        try { await client.ping(); new Notice(MSG_CONNECTED); } catch (e) { plugin.fail(e); }
       }));
 
-    new Setting(containerEl).setName('Task filter')
-      .setDesc('Todoist filter used by "Open task note (filtered tasks)". Examples: "overdue | today", "7 days | overdue".')
-      .addText((t) => t.setValue(s.filter).onChange(async (v) => { s.filter = v; await save(); }));
-
-    new Setting(containerEl).setName('Task notes folder')
-      .addText((t) => t.setValue(s.folder).onChange(async (v) => { s.folder = v.trim(); await save(); }));
-
-    new Setting(containerEl).setName('File name separator')
-      .setDesc('Replaces spaces and characters not allowed in file names when naming a new task note (e.g. "-" gives "fix-the-printer.md"; names are always lower case). Leave empty to keep spaces. Existing notes are not renamed.')
-      .addText((t) => t.setPlaceholder('-').setValue(s.fileNameSeparator).onChange(async (v) => { s.fileNameSeparator = v; await save(); }));
-
-    new Setting(containerEl).setName('Note template (optional)')
-      .setDesc('Path to a note used as template. Placeholders: {{title}} {{description}} {{due}} {{url}} {{id}} {{date}}.')
-      .addText((t) => t.setPlaceholder('Templates/Task note').setValue(s.template).onChange(async (v) => { s.template = v.trim(); await save(); }));
-
-    new Setting(containerEl).setName('Write note link back into the task')
-      .setDesc('Adds a "📝 Obsidian note" link to the Todoist task description.')
-      .addToggle((t) => t.setValue(s.writeBackLink).onChange(async (v) => { s.writeBackLink = v; await save(); }));
-
-    new Setting(containerEl).setName('Fix the link when a note is renamed or moved')
-      .addToggle((t) => t.setValue(s.updateLinkOnRename).onChange(async (v) => { s.updateLinkOnRename = v; await save(); }));
-
-    new Setting(containerEl).setName('Log to daily note')
-      .setDesc('When you open a task note, add a timestamped link to today\'s daily note (once per day).')
-      .addToggle((t) => t.setValue(s.logToDaily).onChange(async (v) => { s.logToDaily = v; await save(); }));
-
-    new Setting(containerEl).setName('Daily note heading')
-      .setDesc('Links go at the end of this section; it\'s created if missing. Leave empty to append at the end.')
-      .addText((t) => t.setValue(s.dailyHeading).onChange(async (v) => { s.dailyHeading = v; await save(); }));
-
-    new Setting(containerEl).setName('Write mention link back into the task')
-      .setDesc('When you insert a task inline, add a "💬 Obsidian mention" link to the task pointing at that note (replaces the previous mention link).')
-      .addToggle((t) => t.setValue(s.writeBackMention).onChange(async (v) => { s.writeBackMention = v; await save(); }));
-
-    new Setting(containerEl).setName('Refresh task notes on startup')
-      .setDesc('Updates due dates and open/closed status in the notes\' properties.')
-      .addToggle((t) => t.setValue(s.refreshOnStartup).onChange(async (v) => { s.refreshOnStartup = v; await save(); }));
-
-    new Setting(containerEl).setName('Due date language')
-      .setDesc('Language of the natural-language due dates you type (e.g. en, fr).')
-      .addText((t) => t.setValue(s.dueLang).onChange(async (v) => { s.dueLang = v.trim() || 'en'; await save(); }));
+    text('Task filter', 'Todoist filter used by the "filtered tasks" commands. Examples: "overdue | today", "7 days | overdue".',
+      'filter', DEFAULTS.filter);
+    text('Task notes folder', 'Where new task notes are created.', 'folder', DEFAULTS.folder, trim);
+    text('File name separator', 'Replaces spaces and characters not allowed in file names when naming a new task note (e.g. "-" gives "fix-the-printer.md"; names are always lower case). Leave empty to keep spaces. Existing notes are not renamed.',
+      'fileNameSeparator', '-');
+    text('Note template (optional)', 'Path to a note used as template. Placeholders: {{title}} {{description}} {{due}} {{url}} {{id}} {{date}}. Its properties are kept and merged with the plugin\'s.',
+      'template', 'Templates/Task note', trim);
+    toggle('Write note link back into the task', 'Adds a "📝 Obsidian note" link to the Todoist task description.', 'writeBackLink');
+    toggle('Fix the link when a note is renamed or moved', 'Updates the "📝 Obsidian note" link in Todoist, if the task has one.', 'updateLinkOnRename');
+    toggle('Log to daily note', 'When a task note is created, add a timestamped link to today\'s daily note.', 'logToDaily');
+    text('Daily note heading', 'Links go at the end of this section; it\'s created if missing. Leave empty to append at the end.',
+      'dailyHeading', DEFAULTS.dailyHeading);
+    toggle('Write mention link back into the task', 'When you insert a task inline, add a "💬 Obsidian mention" link to the task pointing at that note (replaces the previous mention link).',
+      'writeBackMention');
+    toggle('Refresh task notes on startup', 'Updates title, due date and status in the notes\' properties.', 'refreshOnStartup');
+    text('Due date language', 'Language of the natural-language due dates you type (e.g. en, fr).', 'dueLang', 'en',
+      (v) => v.trim() || 'en');
   }
 }
 
-TaskNoteBridge._test = { inlineLine, MENTION_RE, sanitizeTitle, withLink, stripLink, insertUnderHeading, encodeUriPart, compareDue, renderTemplate };
+TaskNoteBridge._test = {
+  PLUGIN_NAME, DEFAULTS, MENTION_RE, LINK_RE,
+  truncate, sanitizeTitle, dueOf, taskUrl, encodeUriPart, withLink, stripLink, insertUnderHeading,
+  sectionContains, dailyNotePath, inlineLine, compareDue, renderTemplate, stripFrontmatter, defaultBody,
+  noteProps, propsDiff, applyProps, indexNotes, propsForLookup,
+  TodoistError, paginate, TodoistClient, TaskPicker, NewTaskModal, BridgeSettingTab,
+};
 module.exports = TaskNoteBridge;

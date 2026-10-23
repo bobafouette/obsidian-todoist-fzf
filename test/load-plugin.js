@@ -13,4 +13,4 @@ Module._resolveFilename = function (request, ...rest) {
 
 const TaskNoteBridge = require(path.join(__dirname, '..', 'main.js'));
 
-module.exports = TaskNoteBridge._test;
+module.exports = { ...TaskNoteBridge._test, TaskNoteBridge };
