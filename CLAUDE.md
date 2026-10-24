@@ -54,6 +54,19 @@ Plugin name "Todoist fzf"; the id stays `task-note-bridge` and the command ids a
   only changed values (`noteProps` + `propsDiff`). Errors are isolated per task and per file.
 - On rename/move of a task note, fixes the 📝 link in Todoist (only if present, task open).
 
+## Family (shared with the other fzf plugins)
+This plugin belongs to a family of sibling plugins (`obsidian-jira-fzf`, `obsidian-todoist-fzf`, …)
+started from `bobafouette/obsidian-fzf-template`, whose `GUIDELINES.md` sets the shared conventions.
+- **Shared files** (keep identical across the family): `.github/workflows/ci.yml`,
+  `.github/workflows/release.yml`, `scripts/bump-version.js`, and `scripts/check.js` except its
+  per-plugin settings block (`SERVICE`, `READ_ONLY`, `TOKEN_PATTERNS`).
+- **Change them in the template first**, then copy the change into each plugin (same commit
+  message), so the plugins never drift apart. Don't fix a shared file in one plugin only.
+- A convention change (commands, notes, frontmatter, daily log, refresh, errors) goes into
+  `GUIDELINES.md` first too. This plugin's released ids and frontmatter keys never change.
+- `test/obsidian-stub.js` and `test/load-plugin.js` started from the template but are owned by
+  this plugin: extend them freely.
+
 ## Code layout (main.js)
 Pure helpers (`sanitizeTitle`, `noteProps`, `propsDiff`, `applyProps`, `indexNotes`,
 `dailyNotePath`, `sectionContains`, `insertUnderHeading`, `renderTemplate`, …),
@@ -81,7 +94,9 @@ to the console and shows an 8 s notice prefixed with the plugin name.
   stub plus an in-memory fake app (`plugin.test.js`) cover commands (ids pinned), refresh,
   daily log, templates and settings; `client.test.js` covers `TodoistClient`;
   `helpers.test.js` the pure helpers (`TaskNoteBridge._test`).
-- `node scripts/check.js`: syntax, mobile safety, manifest/versions.json consistency, secrets.
+- `node scripts/check.js`: syntax, mobile safety, manifest/versions.json consistency, secrets
+  (Todoist tokens). The read-only check is off (`READ_ONLY = false`): the
+  plugin deliberately writes the 📝/💬 links and creates tasks.
 - CI (`.github/workflows/ci.yml`) runs both. Publishing a release (web page) or pushing a
   tag `X.Y.Z` (no `v`) runs `release.yml`, which writes the tag version into
   manifest.json/versions.json and publishes main.js/manifest.json/styles.css for BRAT
